@@ -5,7 +5,6 @@ type Element struct {
 	ID         int
 	Embeddings []float64
 	Msg        string
-	Dimension  int
 }
 
 // Candidate represents a node and its distance to the query point.

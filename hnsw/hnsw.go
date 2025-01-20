@@ -302,14 +302,14 @@ func (h *HNSW) SelectNeighborsHeuristic(
 // 7 W ← SEARCH-LAYER(q, ep, ef, lc =0)
 // 8 return K nearest elements from W to q
 
-func (h *HNSW) KNNSearch(q models.Element, K int, ef int) []int {
+func (h *HNSW) KNNSearch(q models.Element, K int) []int {
 	// W := make(hnswheap.SmallCandidates, 0)
 	ep := h.EnterPoint
 	totalLayers := len(h.Layers)
-	for lc := totalLayers; lc >= 1; lc-- {
+	for lc := (totalLayers - 1); lc >= 0; lc-- {
 		W := h.searchLayer(q, ep, 1, lc)
 		ep = W[0]
 	}
-	W := h.searchLayer(q, ep, ef, 0)
+	W := h.searchLayer(q, ep, h.EfConstruction, 0)
 	return W
 }
