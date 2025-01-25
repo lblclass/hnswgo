@@ -6,14 +6,15 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/lblclass/hnswgo/models"
 	hnswheap "github.com/lblclass/hnswgo/util/heap"
+
+	"github.com/lblclass/hnswgo/models"
 )
 
 // HNSW is the main struct representing the graph.
 type HNSW struct {
-	Layers          []map[int][]int // Connections at each layer
-	EnterPoint      int             // Entry point ID
+	Layers          []map[int]*hnswheap.CandidateHeap // Connections at each layer
+	EnterPoint      int                               // Entry point ID
 	InitConnects    int
 	MaxConnections  int     // Maximum connections per element
 	EfConstruction  int     // Candidate list size
@@ -26,7 +27,7 @@ type HNSW struct {
 // NewHNSW initializes an HNSW graph.
 func NewHNSW(maxConnections, efConstruction, initConnects, maxLayers int, nm float64) *HNSW {
 	return &HNSW{
-		Layers:          []map[int][]int{},
+		Layers:          []map[int]*hnswheap.CandidateHeap{},
 		EnterPoint:      -1,
 		InitConnects:    initConnects,
 		MaxConnections:  maxConnections,
@@ -73,8 +74,10 @@ func (h *HNSW) Insert(q models.Element) {
 	if topLevel <= level {
 		// Add new layers if needed.
 		for i := len(h.Layers); i <= level; i++ {
-			h.Layers = append(h.Layers, map[int][]int{
-				q.ID: {},
+			tmp := hnswheap.CandidateHeap{}
+			heap.Init(&tmp)
+			h.Layers = append(h.Layers, map[int]*hnswheap.CandidateHeap{
+				q.ID: &tmp,
 			})
 		}
 		h.EnterPoint = q.ID
@@ -128,36 +131,37 @@ func (h *HNSW) searchLayer(q models.Element, entryPoint int, ef int, lc int) []i
 		NodeID:   entryPoint,
 		Distance: h.distance(q, h.Elements[entryPoint]),
 	}
-	C := make(hnswheap.SmallCandidates, 0)
-	heap.Init(&C)
-	heap.Push(&C, qCandidate)
-	W := make(hnswheap.BigCandidates, 0)
-	heap.Init(&W)
-	heap.Push(&W, qCandidate)
+	C := hnswheap.NewSmallCandidatesHeap()
+	heap.Init(C)
+	heap.Push(C, qCandidate)
+	W := hnswheap.NewBigCandidatesHeap()
+	heap.Init(W)
+	heap.Push(W, qCandidate)
 	for C.Len() > 0 {
-		nc := heap.Pop(&C).(models.Candidate)
-		fc := W[0]
+		nc := heap.Pop(C).(models.Candidate)
+		fc := W.Candidates[0]
 		if nc.Distance > fc.Distance {
 			break
 		}
-		for _, el := range h.Layers[lc][nc.NodeID] {
-			if _, ok := V[el]; ok {
+		for i := 0; i < h.Layers[lc][nc.NodeID].Len(); i++ {
+			vNode := h.Layers[lc][nc.NodeID].Candidates[i].NodeID
+			if _, ok := V[vNode]; ok {
 				continue
 			}
-			V[el] = true
-			fc := W[0]
-			if (fc.Distance < h.distance(q, h.Elements[el])) || (W.Len() < ef) {
-				tmpC := models.Candidate{NodeID: el, Distance: h.distance(q, h.Elements[el])}
-				heap.Push(&C, tmpC)
-				heap.Push(&W, tmpC)
+			V[vNode] = true
+			if (fc.Distance < h.distance(q, h.Elements[vNode])) || (W.Len() < ef) {
+				tmpC := models.Candidate{NodeID: vNode, Distance: h.distance(q, h.Elements[vNode])}
+				heap.Push(C, tmpC)
+				heap.Push(W, tmpC)
 				if W.Len() > ef {
-					heap.Pop(&W)
+					heap.Pop(W)
 				}
 			}
 		}
 	}
 	// Simplified: replace with real search logic.
-	return []int{entryPoint}
+	return W.ExtractHeapData()
+
 }
 
 // selectNeighbors selects M nearest neighbors from the candidates.
@@ -170,7 +174,19 @@ func (h *HNSW) SelectNeighborsSimple(q models.Element, candidates []int) []int {
 func (h *HNSW) addConnection(from, to, layer int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.Layers[layer][from] = append(h.Layers[layer][from], to)
+	ft := h.distance(h.Elements[from], h.Elements[to])
+	toCandidate := models.Candidate{
+		NodeID:   to,
+		Distance: ft,
+	}
+	if h.Layers[layer][from].Len() < h.MaxConnections {
+		heap.Push(h.Layers[layer][from], toCandidate)
+	} else {
+		if ft < h.Layers[layer][from].Candidates[0].Distance {
+			heap.Pop(h.Layers[layer][from])
+			heap.Push(h.Layers[layer][from], toCandidate)
+		}
+	}
 }
 
 // generateLevel determines the level for a new element.
@@ -230,35 +246,36 @@ func (h *HNSW) SelectNeighborsHeuristic(
 	keepPrunedConnections bool,
 ) []int {
 	R := make(map[int]bool) // Result set
-	W := make(hnswheap.SmallCandidates, 0, len(candidates))
-	heap.Init(&W)
+	W := hnswheap.NewSmallCandidatesHeap()
+	heap.Init(W)
 
 	// Add initial candidates to the queue.
 	for _, c := range candidates {
 		dist := h.distance(q, h.Elements[c])
-		heap.Push(&W, models.Candidate{NodeID: c, Distance: dist})
+		heap.Push(W, models.Candidate{NodeID: c, Distance: dist})
 	}
 
 	// Extend candidates by their neighbors if needed.
 	if extendCandidates {
 		neighbors := map[int]bool{}
 		for _, c := range candidates {
-			for _, neighbor := range h.Layers[layer][c] {
+			for _, neighborStruct := range h.Layers[layer][c].Candidates {
+				neighbor := neighborStruct.NodeID
 				if _, exists := neighbors[neighbor]; !exists {
 					dist := h.distance(q, h.Elements[neighbor])
-					heap.Push(&W, models.Candidate{NodeID: neighbor, Distance: dist})
+					heap.Push(W, models.Candidate{NodeID: neighbor, Distance: dist})
 					neighbors[neighbor] = true
 				}
 			}
 		}
 	}
 
-	Wd := make(hnswheap.SmallCandidates, 0) // Discarded candidates
-	heap.Init(&Wd)
+	Wd := hnswheap.NewSmallCandidatesHeap() // Discarded candidates
+	heap.Init(Wd)
 
 	// Process candidates.
 	for W.Len() > 0 && len(R) < M {
-		e := heap.Pop(&W).(models.Candidate)
+		e := heap.Pop(W).(models.Candidate)
 		closer := true
 		for r := range R {
 			if h.distance(h.Elements[e.NodeID], h.Elements[r]) < e.Distance {
@@ -269,14 +286,14 @@ func (h *HNSW) SelectNeighborsHeuristic(
 		if closer {
 			R[e.NodeID] = true
 		} else {
-			heap.Push(&Wd, e)
+			heap.Push(Wd, e)
 		}
 	}
 
 	// Add pruned connections if required.
 	if keepPrunedConnections {
 		for Wd.Len() > 0 && len(R) < M {
-			e := heap.Pop(&Wd).(models.Candidate)
+			e := heap.Pop(Wd).(models.Candidate)
 			R[e.NodeID] = true
 		}
 	}
@@ -306,10 +323,10 @@ func (h *HNSW) KNNSearch(q models.Element, K int) []int {
 	// W := make(hnswheap.SmallCandidates, 0)
 	ep := h.EnterPoint
 	totalLayers := len(h.Layers)
-	for lc := (totalLayers - 1); lc >= 0; lc-- {
+	for lc := (totalLayers - 1); lc >= 1; lc-- {
 		W := h.searchLayer(q, ep, 1, lc)
 		ep = W[0]
 	}
-	W := h.searchLayer(q, ep, h.EfConstruction, 0)
+	W := h.searchLayer(q, ep, K, 0)
 	return W
 }

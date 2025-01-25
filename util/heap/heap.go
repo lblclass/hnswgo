@@ -4,52 +4,67 @@ import (
 	"github.com/lblclass/hnswgo/models"
 )
 
-// 定义一个类型，满足 heap.Interface
-type BigCandidates []models.Candidate
-
-func (bc BigCandidates) Len() int { return len(bc) }
-
-// 实现 sort.Interface 的 Less 方法，将比较逻辑反转即可实现大顶堆
-func (bc BigCandidates) Less(i, j int) bool {
-	return bc[i].Distance > bc[j].Distance // 大于号表示最大值优先
+// CandidateHeap is a generic heap for Candidates
+type CandidateHeap struct {
+	Candidates []models.Candidate
+	Compare    string // default min
 }
 
-// 实现 sort.Interface 的 Swap 方法
-func (bc BigCandidates) Swap(i, j int) {
-	bc[i], bc[j] = bc[j], bc[i]
+// Len is the number of elements in the collection
+func (ch CandidateHeap) Len() int { return len(ch.Candidates) }
+
+// Less reports whether the element with index i should sort before the element with index j
+func (ch CandidateHeap) Less(i, j int) bool {
+	res := 0.0
+	if ch.Compare == "big" {
+		res = (ch.Candidates[i].Distance - ch.Candidates[j].Distance)
+	} else {
+		res = (ch.Candidates[j].Distance - ch.Candidates[i].Distance)
+	}
+	return res > 0.0
 }
 
-// 实现 heap.Interface 的 Pusbc 方法
-func (bc *BigCandidates) Push(x any) {
-	*bc = append(*bc, x.(models.Candidate))
+// Swap swaps the elements with indexes i and j
+func (ch CandidateHeap) Swap(i, j int) {
+	ch.Candidates[i], ch.Candidates[j] = ch.Candidates[j], ch.Candidates[i]
 }
 
-// 实现 heap.Interface 的 Pop 方法
-func (bc *BigCandidates) Pop() any {
-	old := *bc
-	n := len(old)
-	x := old[n-1]
-	*bc = old[0 : n-1]
-	return x
+// Push adds an element to the heap
+func (ch *CandidateHeap) Push(x interface{}) {
+	ch.Candidates = append(ch.Candidates, x.(models.Candidate))
 }
 
-// PriorityQueue implements a min-heap for sorting candidates.
-type SmallCandidates []models.Candidate
-
-func (sc SmallCandidates) Len() int { return len(sc) }
-func (sc SmallCandidates) Less(i, j int) bool {
-	return sc[i].Distance < sc[j].Distance
-}
-func (sc SmallCandidates) Swap(i, j int) { sc[i], sc[j] = sc[j], sc[i] }
-
-func (sc *SmallCandidates) Push(x interface{}) {
-	*sc = append(*sc, x.(models.Candidate))
-}
-
-func (sc *SmallCandidates) Pop() interface{} {
-	old := *sc
+// Pop removes and returns the last element of the heap
+func (ch *CandidateHeap) Pop() interface{} {
+	old := ch.Candidates
 	n := len(old)
 	item := old[n-1]
-	*sc = old[0 : n-1]
+	ch.Candidates = old[0 : n-1]
 	return item
+}
+
+// ExtractHeapData returns all node IDs in the heap without affecting the heap structure
+func (ch *CandidateHeap) ExtractHeapData() []int {
+	dataCopy := make([]int, len(ch.Candidates))
+	for i, item := range ch.Candidates {
+		dataCopy[i] = item.NodeID
+	}
+	return dataCopy
+}
+
+// NewCandidateHeap creates a new CandidateHeap with a custom comparison function
+func NewCandidateHeap(compare string) *CandidateHeap {
+	return &CandidateHeap{
+		Compare: compare,
+	}
+}
+
+// Create a max-heap for BigCandidates based on Distance
+func NewBigCandidatesHeap() *CandidateHeap {
+	return NewCandidateHeap("big")
+}
+
+// Create a min-heap for SmallCandidates based on Distance
+func NewSmallCandidatesHeap() *CandidateHeap {
+	return NewCandidateHeap("small")
 }
