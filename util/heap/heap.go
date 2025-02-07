@@ -1,7 +1,14 @@
 package hnswheap
 
 import (
+	"container/heap"
+
 	"github.com/lblclass/hnswgo/models"
+)
+
+const (
+	SMALL = "small"
+	BIG   = "big"
 )
 
 // CandidateHeap is a generic heap for Candidates
@@ -16,7 +23,7 @@ func (ch CandidateHeap) Len() int { return len(ch.Candidates) }
 // Less reports whether the element with index i should sort before the element with index j
 func (ch CandidateHeap) Less(i, j int) bool {
 	res := 0.0
-	if ch.Compare == "big" {
+	if ch.Compare == BIG {
 		res = (ch.Candidates[i].Distance - ch.Candidates[j].Distance)
 	} else {
 		res = (ch.Candidates[j].Distance - ch.Candidates[i].Distance)
@@ -50,6 +57,41 @@ func (ch *CandidateHeap) ExtractHeapData() []int {
 		dataCopy[i] = item.NodeID
 	}
 	return dataCopy
+}
+
+// get top value
+func (ch *CandidateHeap) topValue(K int, topType string) []int {
+	res := make([]int, K)
+	if topType == ch.Compare {
+		for i := 0; i < K; i++ {
+			tmpRes := ch.Pop().(models.Candidate)
+			res[i] = tmpRes.NodeID
+		}
+	} else {
+		if K < ch.Len() {
+			for j := 0; j < (ch.Len() - K); j++ {
+				heap.Pop(ch)
+			}
+		}
+		index := K
+		if K > ch.Len() {
+			index = ch.Len()
+		}
+		for j := (index - 1); j > 0; j-- {
+			tmpRes := heap.Pop(ch).(models.Candidate)
+			res[j] = tmpRes.NodeID
+		}
+	}
+	return res
+}
+
+// get top K min value
+func (ch *CandidateHeap) TopKMinVal(K int) []int {
+	return ch.topValue(K, SMALL)
+}
+
+func (ch *CandidateHeap) TopKmaxVal(K int) []int {
+	return ch.topValue(K, BIG)
 }
 
 // NewCandidateHeap creates a new CandidateHeap with a custom comparison function

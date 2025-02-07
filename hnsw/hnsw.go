@@ -15,8 +15,8 @@ import (
 type HNSW struct {
 	Layers          []map[int]*hnswheap.CandidateHeap // Connections at each layer
 	EnterPoint      int                               // Entry point ID
-	InitConnects    int
-	MaxConnections  int     // Maximum connections per element
+	M               int
+	maxConnections  int     // Maximum connections per element
 	EfConstruction  int     // Candidate list size
 	NormalizationML float64 // Level normalization factor
 	MaxLayers       int
@@ -25,12 +25,12 @@ type HNSW struct {
 }
 
 // NewHNSW initializes an HNSW graph.
-func NewHNSW(maxConnections, efConstruction, initConnects, maxLayers int, nm float64) *HNSW {
+func NewHNSW(efConstruction, M, maxLayers int, nm float64) *HNSW {
 	return &HNSW{
 		Layers:          []map[int]*hnswheap.CandidateHeap{},
 		EnterPoint:      -1,
-		InitConnects:    initConnects,
-		MaxConnections:  maxConnections,
+		M:               M,
+		maxConnections:  2 * M,
 		EfConstruction:  efConstruction,
 		MaxLayers:       maxLayers,
 		NormalizationML: nm,
@@ -63,7 +63,8 @@ func (h *HNSW) Insert(q models.Element) {
 	} else {
 		// 如果topLevel大于level，则ep需要有些变化。
 		for lc := topLevel; lc > level; lc-- {
-			ep = h.SearchLayer(q, ep, 1, lc)[0]
+			tmpEp := h.SearchLayer(q, ep, 1, lc)
+			ep = tmpEp.Candidates[0].NodeID
 		}
 	}
 
@@ -73,8 +74,9 @@ func (h *HNSW) Insert(q models.Element) {
 		}
 		heap.Init(&tmp)
 		h.Layers[lc][q.ID] = &tmp
-		neighbors := h.SearchLayer(q, ep, h.EfConstruction, lc)
-		selected := h.SelectNeighborsHeuristic(q, neighbors, h.InitConnects, lc, true, true)
+		tmpNeighbors := h.SearchLayer(q, ep, h.EfConstruction, lc)
+		neighbors := tmpNeighbors.ExtractHeapData()
+		selected := h.SelectNeighborsHeuristic(q, neighbors, h.M, lc, true, true)
 
 		// Connect bidirectionally.
 		for _, n := range selected {
@@ -87,7 +89,7 @@ func (h *HNSW) Insert(q models.Element) {
 }
 
 // searchLayer finds nearest neighbors in the specified layer.
-func (h *HNSW) SearchLayer(q models.Element, entryPoint int, ef int, lc int) []int {
+func (h *HNSW) SearchLayer(q models.Element, entryPoint int, ef int, lc int) *hnswheap.CandidateHeap {
 	V := map[int]bool{entryPoint: true} // set of visited elements
 	qCandidate := models.Candidate{
 		NodeID:   entryPoint,
@@ -122,14 +124,14 @@ func (h *HNSW) SearchLayer(q models.Element, entryPoint int, ef int, lc int) []i
 		}
 	}
 	// Simplified: replace with real search logic.
-	return W.ExtractHeapData()
+	return W
 
 }
 
 // selectNeighbors selects M nearest neighbors from the candidates.
 func (h *HNSW) SelectNeighborsSimple(q models.Element, candidates []int) []int {
 	// candidates is already ordered at select
-	return candidates[:min(len(candidates), h.InitConnects)]
+	return candidates[:min(len(candidates), h.M)]
 }
 
 // addConnection adds a connection to the graph.
@@ -141,7 +143,7 @@ func (h *HNSW) addConnection(from, to, layer int) {
 		NodeID:   to,
 		Distance: ft,
 	}
-	if h.Layers[layer][from].Len() < h.MaxConnections {
+	if h.Layers[layer][from].Len() < h.maxConnections {
 		heap.Push(h.Layers[layer][from], toCandidate)
 	} else {
 		if ft < h.Layers[layer][from].Candidates[0].Distance {
@@ -249,8 +251,8 @@ func (h *HNSW) KNNSearch(q models.Element, K int) []int {
 	totalLayers := len(h.Layers)
 	for lc := (totalLayers - 1); lc >= 1; lc-- {
 		W := h.SearchLayer(q, ep, 1, lc)
-		ep = W[0]
+		ep = W.Candidates[0].NodeID
 	}
 	W := h.SearchLayer(q, ep, K, 0)
-	return W
+	return W.TopKMinVal(K)
 }
