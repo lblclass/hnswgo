@@ -58,7 +58,7 @@ func randomVector(dim int) []float64 {
 ```
 ## API Reference
 
-### NewHNSW(efConstruction int, M int, maxLayers int, nm float64) *HNSW
+#### NewHNSW(efConstruction int, M int, maxLayers int, nm float64) *HNSW
 
 Creates a new HNSW index.
 - efConstruction: Size of the candidate list.
@@ -70,7 +70,7 @@ Creates a new HNSW index.
 
 Inserts a new element into the index.
 
-### KNNSearch(q models.Element, K int) []int
+#### KNNSearch(q models.Element, K int) []int
 
 Finds K approximate nearest neighbors of a given element.
 
