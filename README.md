@@ -1,6 +1,6 @@
 # HNSWGo
 
-A Golang implementation of the Hierarchical Navigable Small World (HNSW) algorithm for efficient approximate nearest neighbor (ANN) search.
+A Golang implementation of the Hierarchical Navigable Small World (HNSW) algorithm for efficient approximate nearest neighbor (KNN) search.
 
 ## Features
 
